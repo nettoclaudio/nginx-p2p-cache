@@ -1,0 +1,24 @@
+run:
+  deadline: 1m
+  tests: true
+
+linters:
+  enable:
+  - bodyclose
+  - contextcheck
+  - goimports
+  - gosec
+  - misspell
+  - nestif
+  - reassign
+  - whitespace
+
+linters-settings:
+  gofmt:
+    simplify: true
+
+  govet:
+    check-shadowing: true
+    enable:
+    - fieldalignment
+    - unreachable
