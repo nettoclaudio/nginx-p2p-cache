@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-nginx
+  labels:
+    app.kubernetes.io/name: my-nginx
+    app.kubernetes.io/component: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: my-nginx
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: my-nginx
+        app.kubernetes.io/component: web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.23
+        ports:
+        - name: http
+          protocol: TCP
+          containerPort: 8080
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: nginx-cache
+          mountPath: /var/cache/nginx/http
+      - name: nginx-p2p-cache
+        image: nettoclaudio/nginx-p2p-cache:latest
+        imagePullPolicy: Never
+        args:
+        - --debug
+        - --cache-dir=/var/cache
+        - --service-discovery-dns=my-nginx-units.default.svc.cluster.local
+        - --service-discovery-dns-query-interval=10s
+        volumeMounts:
+        - name: nginx-cache
+          mountPath: /var/cache
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: my-nginx-config
+      - name: nginx-cache
+        emptyDir:
+          medium: Memory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-nginx
+spec:
+  selector:
+    app.kubernetes.io/name: my-nginx
+    app.kubernetes.io/component: web
+  type: NodePort
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-nginx-units
+spec:
+  selector:
+    app.kubernetes.io/name: my-nginx
+    app.kubernetes.io/component: web
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-nginx-config
+data:
+  nginx.conf: >
+    user nginx;
+    worker_processes 1;
+
+    error_log /dev/stderr;
+
+    events {
+      worker_connections 1024;
+    }
+
+    http {
+      proxy_cache_path /var/cache/nginx/http keys_zone=http_cache_zone:10m;
+      proxy_cache http_cache_zone;
+      proxy_cache_key '$uri$is_args$args';
+
+      server {
+        listen 8080;
+
+        location = /healthz {
+          return 200 'WORKING';
+        }
+
+        location = /greeting {
+          proxy_pass http://127.0.0.1:8081/;
+        }
+      }
+
+      server {
+        listen 127.0.0.1:8081;
+
+        location / {
+          expires 1m;
+          return 200 'Hello world, ${arg_name}';
+        }
+      }
+    }
