@@ -116,6 +116,10 @@ func (cw *CacheWatcher) fullSync(watcher *fsnotify.Watcher, dir string) error {
 func (cw *CacheWatcher) handleEvent(watcher *fsnotify.Watcher, event fsnotify.Event) {
 	filename := event.Name
 
+	if len(filepath.Base(filename)) != 32 { // ignoring temporary file :P
+		return
+	}
+
 	if event.Op.Has(fsnotify.Create) || event.Op.Has(fsnotify.Write) {
 		if ok, _ := IsDir(filename); ok {
 			watcher.Add(filename)
