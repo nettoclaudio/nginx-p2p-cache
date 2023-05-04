@@ -2,6 +2,7 @@ package sd
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -83,6 +84,12 @@ func (dsd *DNSServiceDiscovery) discoverPeersByDomain(domain string) error {
 
 	ips, err := net.DefaultResolver.LookupIP(context.Background(), network, domain)
 	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			dsd.Logger.Debug("No entries found")
+			return nil
+		}
+
 		return err
 	}
 
