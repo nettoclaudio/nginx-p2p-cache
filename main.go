@@ -3,13 +3,15 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/nettoclaudio/nginx-p2p-cache/internal/nginx"
+	"github.com/nettoclaudio/nginx-p2p-cache/internal/sd"
 )
 
 var cfg struct {
@@ -17,6 +19,8 @@ var cfg struct {
 	ServiceDiscoveryMethod           string
 	ServiceDiscoveryDNS              string
 	ServiceDiscoveryDNSQueryInterval time.Duration
+	ServiceDiscoveryDNSDisableIPv6   bool
+	Debug                            bool
 }
 
 func main() {
@@ -24,57 +28,51 @@ func main() {
 	flag.StringVar(&cfg.ServiceDiscoveryMethod, "service-discovery-method", "dns", "Method used to discover peers (allowed methods are: \"dns\")")
 	flag.StringVar(&cfg.ServiceDiscoveryDNS, "service-discovery-dns", "", "Domain name used to discover peers")
 	flag.DurationVar(&cfg.ServiceDiscoveryDNSQueryInterval, "service-discovery-dns-query-interval", time.Second, "Interval between consecutive DNS queries")
+	flag.BoolVar(&cfg.ServiceDiscoveryDNSDisableIPv6, "service-discovery-dns-disable-ipv6", false, "Whether should disable AAAA queries")
+	flag.BoolVar(&cfg.Debug, "debug", false, "Whether should run in debug mode")
 	flag.Parse()
+
+	logger := zap.Must(zap.NewProduction())
+	if cfg.Debug {
+		logger = zap.Must(zap.NewDevelopment())
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-	fmt.Println("Starting Nginx P2P cache sidecar...")
+	logger.Info("Starting the Nginx P2P cache sidecar")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cw := &nginx.CacheWatcher{}
-
 	go func() {
-		if err := cw.Watch(ctx, cfg.CacheDir); err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to watch cache files:", err)
-			cancel()
+		defer cancel()
+
+		cm := &nginx.CacheManager{
+			Discoverer: &sd.DNSServiceDiscovery{
+				Domain:      cfg.ServiceDiscoveryDNS,
+				Interval:    cfg.ServiceDiscoveryDNSQueryInterval,
+				DisableIPv6: cfg.ServiceDiscoveryDNSDisableIPv6,
+				Logger:      logger,
+			},
+			Watcher: &nginx.CacheWatcher{
+				Directory: cfg.CacheDir,
+				Logger:    logger,
+			},
+			Interval: time.Minute,
+			Logger:   logger,
 		}
-	}()
 
-	go func() {
-		for added := range cw.Added() {
-			fmt.Println("[ADDED]: ", added)
-		}
-	}()
-
-	go func() {
-		for removed := range cw.Removed() {
-			fmt.Println("[REMOVED]: ", removed)
-		}
-	}()
-
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-
-		for {
-			select {
-			case <-ticker.C:
-				fmt.Printf("Keys: %+v\n", cw.Keys())
-
-			case <-ctx.Done():
-				return
-			}
+		if err := cm.Reconcile(ctx); err != nil {
+			logger.Error("Failed to start cache manager", zap.Error(err))
 		}
 	}()
 
 	select {
 	case <-stop:
-		fmt.Println("Received a signal to stop the service...")
+		logger.Debug("Received a stop signal from system")
 
 	case <-ctx.Done():
-		fmt.Println("Something went wrong... aborting program execution")
-		os.Exit(1)
+		logger.Fatal("Sometheing went wrong on program execution... aborting.")
 	}
 }

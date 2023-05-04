@@ -3,5 +3,7 @@ package sd
 import "context"
 
 type ServiceDiscoverer interface {
-	Discover(ctx context.Context, peers chan<- string) error
+	Added() <-chan string
+	Removed() <-chan string
+	Discover(ctx context.Context) error
 }

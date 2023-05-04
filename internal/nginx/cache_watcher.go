@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"go.uber.org/zap"
 )
 
 type CacheEntry struct {
@@ -21,30 +22,35 @@ type CacheEntry struct {
 }
 
 type CacheWatcher struct {
+	Directory string
+	Logger    *zap.Logger
+
 	data    sync.Map
 	added   chan string
 	removed chan string
+	o       sync.Once
 }
 
 func (cw *CacheWatcher) Added() <-chan string {
+	cw.startChannels()
 	return cw.added
 }
 
 func (cw *CacheWatcher) Removed() <-chan string {
+	cw.startChannels()
 	return cw.removed
 }
 
-func (cw *CacheWatcher) Watch(ctx context.Context, directory string) error {
-	cw.added = make(chan string)
-	cw.removed = make(chan string)
-	defer close(cw.added)
-	defer close(cw.removed)
-
+func (cw *CacheWatcher) Watch(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	if ok, _ := IsDir(directory); !ok {
+	cw.startChannels()
+	defer close(cw.added)
+	defer close(cw.removed)
+
+	if ok, _ := IsDir(cw.Directory); !ok {
 		return errors.New("path is not directory")
 	}
 
@@ -54,7 +60,7 @@ func (cw *CacheWatcher) Watch(ctx context.Context, directory string) error {
 	}
 	defer watcher.Close()
 
-	if err := cw.fullSync(watcher, directory); err != nil {
+	if err := cw.fullSync(watcher, cw.Directory); err != nil {
 		return err
 	}
 
@@ -149,6 +155,10 @@ func (cw *CacheWatcher) deleteFile(filename string) {
 	key := filepath.Base(filename)
 	cw.data.Delete(key)
 	cw.removed <- key
+}
+
+func (cw *CacheWatcher) startChannels() {
+	cw.o.Do(func() { cw.added, cw.removed = make(chan string), make(chan string) })
 }
 
 func Unmarshal(filename string) (CacheEntry, error) {
