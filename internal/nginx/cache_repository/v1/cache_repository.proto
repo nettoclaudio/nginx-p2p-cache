@@ -1,0 +1,17 @@
+syntax = "proto3";
+package cache_repository_v1;
+option go_package = "github.com/nettoclaudio/nginx-p2p-cache/internal/nginx/cache_repository/v1";
+
+service CacheRepository {
+  rpc List(ListRequest) returns (ListResponse);
+}
+
+message ListRequest {}
+
+message ListResponse {
+  map<string, CacheItem> Items = 1;
+}
+
+message CacheItem {
+  string id = 1;
+}
